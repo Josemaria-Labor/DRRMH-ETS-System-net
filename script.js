@@ -68,122 +68,155 @@ document.addEventListener('DOMContentLoaded', () => {
 
 	// Main function: add request row + dropdown
 	function addRequestRow() {
-	const currentTime = getCurrentTimeStr();
+		const currentTime = getCurrentTimeStr();
 
-	const tr = document.createElement('tr');
-	tr.innerHTML = `
-		<td>
-			<button class="play-btn" type="button">▶</button>
-			<span class="request-time">${currentTime}</span>
-		</td>
-		<td contenteditable="true"></td>
-		<td contenteditable="true" style="width:60px;text-align:center"></td>
-		<td contenteditable="true"></td>
-		<td contenteditable="true"></td>
-		<td contenteditable="true"></td>
-		<td contenteditable="true" style="width:70px;"></td>
-		<td contenteditable="true"></td>
-		<td><button class="delete-btn" type="button">✕</button></td>
-		<td class="checkbox-col">
-			<button class="done-btn btn" type="button">Done</button>
-		</td>
-	`;
-
-	tr.querySelector('.request-time').contentEditable = "false";
-
-	const dropdown = createPartialDeliveriesContainer();
-
-	tr.querySelector('.delete-btn').addEventListener('click', () => {
-		tr.remove();
-		dropdown.remove();
-	});
-
-	const toggleBtn = tr.querySelector('.play-btn');
-	toggleBtn.addEventListener('click', () => {
-		const hidden = dropdown.style.display === "none";
-		dropdown.style.display = hidden ? "table-row" : "none";
-		toggleBtn.textContent = hidden ? "▼" : "▶";
-	});
-
-	tr.querySelector('.done-btn').addEventListener('click', () => {
-		const arrivalRow = document.createElement('tr');
-		const cells = tr.querySelectorAll('td');
-
-		arrivalRow.innerHTML = `
-			<td contenteditable="true">${cells[0].querySelector('.request-time').textContent}</td>
-			<td contenteditable="true">${cells[1].textContent}</td>
-			<td contenteditable="true">${cells[2].textContent}</td>
-			<td contenteditable="true">${cells[3].textContent}</td>
-			<td contenteditable="true">${cells[4].textContent}</td>
-			<td contenteditable="true">${cells[5].textContent}</td>
-			<td contenteditable="true">${cells[6].textContent}</td>
+		const tr = document.createElement('tr');
+		tr.innerHTML = `
+			<td>
+				<button class="play-btn" type="button">▶</button>
+				<span class="request-time">${currentTime}</span>
+			</td>
+			<td contenteditable="true"></td>
+			<td contenteditable="true"></td>
+			<td contenteditable="true"></td>
+			<td contenteditable="true"></td>
+			<td contenteditable="true"></td>
+			<td contenteditable="true" class="est-min"></td>
+			<td contenteditable="true" class="eta"></td>
 			<td><button class="delete-btn" type="button">✕</button></td>
+			<td class="checkbox-col">
+				<button class="done-btn btn" type="button">Done</button>
+			</td>
 		`;
 
-		arrivalRow.querySelectorAll('td').forEach(td => td.style.whiteSpace = "normal");
+		tr.querySelector('.request-time').contentEditable = "false";
 
-		const partialTbody = dropdown.querySelector('tbody');
-		const partialRows = partialTbody.querySelectorAll('tr');
+		const estCell = tr.querySelector('.est-min');
+		const etaCell = tr.querySelector('.eta');
 
-		if (partialRows.length) {
-			const partialContainer = document.createElement('tr');
-			const colspan = 9;
-			partialContainer.innerHTML = `<td colspan="${colspan}" style="padding:0;"></td>`;
-			const td = partialContainer.querySelector('td');
+		// Helpers for ETA calculation
+		function addMinutesToTime(timeStr, minutesToAdd) {
+			const [hh, mm] = timeStr.split(':').map(Number);
+			const date = new Date();
+			date.setHours(hh);
+			date.setMinutes(mm + Number(minutesToAdd));
+			const newH = String(date.getHours()).padStart(2, '0');
+			const newM = String(date.getMinutes()).padStart(2, '0');
+			return `${newH}:${newM}`;
+		}
 
-			const innerTable = document.createElement('table');
-			innerTable.style.width = '100%';
-			innerTable.style.borderCollapse = 'collapse';
-			innerTable.style.tableLayout = 'fixed';
-			innerTable.style.fontSize = '0.9em';
-			innerTable.style.margin = '0';
-			innerTable.style.padding = '0';
+		function minutesDiffFromNow(timeStr) {
+			const now = new Date();
+			const [hh, mm] = timeStr.split(':').map(Number);
+			const target = new Date();
+			target.setHours(hh);
+			target.setMinutes(mm);
+			let diffMs = target - now;
+			if (diffMs < 0) diffMs += 24*60*60*1000; // handle crossing midnight
+			return Math.round(diffMs / 60000);
+		}
 
-			// Column widths match main table
-			const colgroup = document.createElement('colgroup');
-			colgroup.innerHTML = `
-				<col style="width:120px">
-				<col>
-				<col style="width:160px">
-				<col style="width:60px">
+		// Two-way binding
+		estCell.addEventListener('input', () => {
+			const val = estCell.textContent.trim();
+			if (val === '' || isNaN(val)) return;
+			etaCell.textContent = addMinutesToTime(currentTime, val);
+		});
+
+		etaCell.addEventListener('input', () => {
+			const val = etaCell.textContent.trim();
+			if (val === '') return;
+			estCell.textContent = minutesDiffFromNow(val);
+		});
+
+		const dropdown = createPartialDeliveriesContainer();
+
+		tr.querySelector('.delete-btn').addEventListener('click', () => {
+			tr.remove();
+			dropdown.remove();
+		});
+
+		const toggleBtn = tr.querySelector('.play-btn');
+		toggleBtn.addEventListener('click', () => {
+			const hidden = dropdown.style.display === "none";
+			dropdown.style.display = hidden ? "table-row" : "none";
+			toggleBtn.textContent = hidden ? "▼" : "▶";
+		});
+
+		tr.querySelector('.done-btn').addEventListener('click', () => {
+			const arrivalRow = document.createElement('tr');
+
+			arrivalRow.innerHTML = `
+				<td contenteditable="true">${tr.querySelector('.request-time').textContent}</td>
+				<td contenteditable="true">${tr.children[1].textContent}</td>
+				<td contenteditable="true">${tr.children[2].textContent}</td>
+				<td contenteditable="true">${tr.children[3].textContent}</td>
+				<td contenteditable="true">${tr.children[4].textContent}</td>
+				<td contenteditable="true">${tr.children[5].textContent}</td>
+				<td contenteditable="true">${etaCell.textContent}</td>
+				<td><button class="delete-btn" type="button">✕</button></td>
 			`;
-			innerTable.appendChild(colgroup);
 
-			const innerTbody = document.createElement('tbody');
+			arrivalRow.querySelectorAll('td').forEach(td => td.style.whiteSpace = "normal");
 
-			partialRows.forEach(pr => {
-				const clone = pr.cloneNode(true);
-				clone.querySelectorAll('[contenteditable]').forEach(td => td.setAttribute('contenteditable','true'));
-				const delBtn = clone.querySelector('.delRowBtn');
-				if (delBtn) {
-					delBtn.addEventListener('click', () => clone.remove());
-				}
-				innerTbody.appendChild(clone);
-			});
+			const partialTbody = dropdown.querySelector('tbody');
+			const partialRows = partialTbody.querySelectorAll('tr');
 
-			innerTable.appendChild(innerTbody);
-			td.appendChild(innerTable);
+			if (partialRows.length) {
+				const partialContainer = document.createElement('tr');
+				const colspan = 9;
+				partialContainer.innerHTML = `<td colspan="${colspan}" style="padding:0;"></td>`;
+				const td = partialContainer.querySelector('td');
 
-			arrivalTableBody.appendChild(arrivalRow);
-			arrivalTableBody.appendChild(partialContainer);
-		} else {
-			arrivalTableBody.appendChild(arrivalRow);
-		}
+				const innerTable = document.createElement('table');
+				innerTable.style.width = '100%';
+				innerTable.style.borderCollapse = 'collapse';
+				innerTable.style.tableLayout = 'fixed';
+				innerTable.style.fontSize = '0.9em';
+				innerTable.style.margin = '0';
+				innerTable.style.padding = '0';
 
-		const delBtn = arrivalRow.querySelector('.delete-btn');
-		if (delBtn) {
-			delBtn.addEventListener('click', () => {
-				arrivalRow.remove();
-			});
-		}
+				const colgroup = document.createElement('colgroup');
+				colgroup.innerHTML = `
+					<col style="width:120px">
+					<col>
+					<col style="width:160px">
+					<col style="width:60px">
+				`;
+				innerTable.appendChild(colgroup);
 
-		tr.remove();
-		dropdown.remove();
-	});
+				const innerTbody = document.createElement('tbody');
+
+				partialRows.forEach(pr => {
+					const clone = pr.cloneNode(true);
+					clone.querySelectorAll('[contenteditable]').forEach(td => td.setAttribute('contenteditable','true'));
+					const delBtn = clone.querySelector('.delRowBtn');
+					if (delBtn) delBtn.addEventListener('click', () => clone.remove());
+					innerTbody.appendChild(clone);
+				});
+
+				innerTable.appendChild(innerTbody);
+				td.appendChild(innerTable);
+
+				arrivalTableBody.appendChild(arrivalRow);
+				arrivalTableBody.appendChild(partialContainer);
+			} else {
+				arrivalTableBody.appendChild(arrivalRow);
+			}
+
+			const delBtn = arrivalRow.querySelector('.delete-btn');
+			if (delBtn) delBtn.addEventListener('click', () => arrivalRow.remove());
+
+			tr.remove();
+			dropdown.remove();
+		});
 
 		requestTableBody.appendChild(tr);
 		requestTableBody.appendChild(dropdown);
 	}
+
+
+
 
 
 	addRowBtn.addEventListener('click', addRequestRow);
