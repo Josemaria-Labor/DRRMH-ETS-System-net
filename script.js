@@ -5,16 +5,34 @@
 (function () {
   'use strict';
 
-  // ---------- Config / storage keys ----------
+  //Config / storage keys 
   const DEFAULT_SPEED_KMH = 30;
   const KEY_ACTIVE_LOCATION = 'ets_active_location_v2';
   const KEY_SCENARIOS = 'ets_scenarios_v2';
   const KEY_AUTOSAVE = 'ets_autosave_current_v2';
+  const KEY_LOGGED_IN = 'ets_logged_in';
+  const KEY_USERNAME = 'ets_username';
   const AUTOSAVE_DELAY = 800; // ms
   const ETA_UPDATE_INTERVAL = 10_000; // ms
   const CSV_PATH = './resources.csv'; // auto-load path
 
-  // ---------- Helpers ----------
+  //Supabase Configuration 
+  const SUPABASE_URL = 'https://lqewapijqycrfgbsgxwe.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxZXdhcGlqcXljcmZnYnNneHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcyOTk5NTAsImV4cCI6MjA4Mjg3NTk1MH0.WDt78w2gyFHI60_ydcjfvGYQEYlk_DU4D-T5MWiF2j8';
+  
+  // Initialize Supabase client
+  let supabase = null;
+  if (typeof window.supabase !== 'undefined' && SUPABASE_URL !== 'YOUR_SUPABASE_URL') {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+
+  //Login credentials (simple demo) 
+  const VALID_USERS = {
+    'admin': 'admin123',
+    'user': 'password'
+  };
+
+  //Helpers 
   const $ = (s, ctx = document) => (ctx || document).querySelector(s);
   const $$ = (s, ctx = document) => Array.from((ctx || document).querySelectorAll(s));
   const nowHM = () => {
@@ -44,7 +62,177 @@
   function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('save err', e); } }
   function load(k, fallback = null) { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : fallback; } catch (e) { return fallback; } }
 
-  // ---------- DOM refs ----------
+  //Login/Logout Logic 
+  async function checkLoginStatus() {
+    if (!supabase) {
+      // Fallback to local authentication if Supabase is not configured
+      const loggedIn = load(KEY_LOGGED_IN, false);
+      if (loggedIn) {
+        showMainApp();
+        initializeApp();
+      } else {
+        showLoginPage();
+      }
+      return;
+    }
+
+    // Check for existing Supabase session
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (session) {
+      save(KEY_USERNAME, session.user.email);
+      showMainApp();
+      initializeApp();
+    } else {
+      showLoginPage();
+    }
+  }
+
+  function showLoginPage() {
+    const loginPage = $('#loginPage');
+    const mainApp = $('#mainApp');
+    if (loginPage) loginPage.classList.remove('hidden');
+    if (mainApp) mainApp.classList.add('hidden');
+  }
+
+  function showMainApp() {
+    const loginPage = $('#loginPage');
+    const mainApp = $('#mainApp');
+    if (loginPage) loginPage.classList.add('hidden');
+    if (mainApp) mainApp.classList.remove('hidden');
+  }
+
+  async function handleLogin() {
+    const usernameInput = $('#loginUsername');
+    const passwordInput = $('#loginPassword');
+    const errorDiv = $('#loginError');
+    
+    const email = usernameInput.value.trim();
+    const password = passwordInput.value.trim();
+    
+    if (!email || !password) {
+      errorDiv.textContent = 'Please enter both email and password';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (!supabase) {
+      // Fallback to local authentication
+      errorDiv.textContent = 'Supabase not configured. Please set your credentials.';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: password,
+      });
+
+      if (error) {
+        errorDiv.textContent = error.message;
+        errorDiv.classList.remove('hidden');
+      } else {
+        save(KEY_USERNAME, data.user.email);
+        errorDiv.classList.add('hidden');
+        showMainApp();
+        initializeApp();
+      }
+    } catch (err) {
+      errorDiv.textContent = 'Login failed. Please try again.';
+      errorDiv.classList.remove('hidden');
+    }
+  }
+
+  async function handleSignup() {
+    const emailInput = $('#signupEmail');
+    const passwordInput = $('#signupPassword');
+    const confirmInput = $('#signupPasswordConfirm');
+    const errorDiv = $('#signupError');
+    
+    const email = emailInput.value.trim();
+    const password = passwordInput.value.trim();
+    const confirm = confirmInput.value.trim();
+    
+    if (!email || !password || !confirm) {
+      errorDiv.textContent = 'Please fill in all fields';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (password !== confirm) {
+      errorDiv.textContent = 'Passwords do not match';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (password.length < 6) {
+      errorDiv.textContent = 'Password must be at least 6 characters';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (!supabase) {
+      errorDiv.textContent = 'Supabase not configured. Please set your credentials.';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email,
+        password: password,
+      });
+
+      if (error) {
+        errorDiv.textContent = error.message;
+        errorDiv.classList.remove('hidden');
+      } else {
+        errorDiv.classList.add('hidden');
+        // Show success message
+        alert('Account created! Please check your email to verify your account.');
+        // Switch back to login form
+        toggleToLogin();
+      }
+    } catch (err) {
+      errorDiv.textContent = 'Signup failed. Please try again.';
+      errorDiv.classList.remove('hidden');
+    }
+  }
+
+  async function handleLogout() {
+    if (!confirm('Are you sure you want to logout?')) return;
+
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    
+    save(KEY_LOGGED_IN, false);
+    save(KEY_USERNAME, '');
+    showLoginPage();
+    
+    // Clear forms
+    const usernameInput = $('#loginUsername');
+    const passwordInput = $('#loginPassword');
+    if (usernameInput) usernameInput.value = '';
+    if (passwordInput) passwordInput.value = '';
+  }
+
+  function toggleToSignup() {
+    const loginForm = $('.login-form:not(#signupForm)');
+    const signupForm = $('#signupForm');
+    if (loginForm) loginForm.classList.add('hidden');
+    if (signupForm) signupForm.classList.remove('hidden');
+  }
+
+  function toggleToLogin() {
+    const loginForm = $('.login-form:not(#signupForm)');
+    const signupForm = $('#signupForm');
+    if (signupForm) signupForm.classList.add('hidden');
+    if (loginForm) loginForm.classList.remove('hidden');
+  }
+
+  //DOM refs 
   const refs = {
     csvUpload: $('#csvUpload'),
     csvStatus: $('#csvStatus'),
@@ -65,6 +253,7 @@
     finishBtn: $('#finishBtn'),
     createNewBtn: $('#createNewBtn'),
     exportBtn: $('#exportBtn'),
+    logoutBtn: $('#logoutBtn'),
     autosaveBadge: $('#autosaveBadge'),
     scenariosList: $('#scenariosList'),
     chartStatus: $('#chartStatus'),
@@ -74,10 +263,13 @@
     summaryToggleBtn: $('#summaryToggleBtn'),
     resourcesUploadContainer: document.querySelector('.csv-controls') || null,
     startTimeLabel: $('#startTimeLabel'),
-    endTimeLabel: $('#endTimeLabel')
+    endTimeLabel: $('#endTimeLabel'),
+    loginBtn: $('#loginBtn'),
+    loginUsername: $('#loginUsername'),
+    loginPassword: $('#loginPassword')
   };
 
-  // ---------- In-memory state ----------
+  //In-memory state 
   let resourceSets = []; // csv only; not stored to localStorage
   let activeLocationName = load(KEY_ACTIVE_LOCATION, null); // name only
   let autosaveTimer = null;
@@ -94,7 +286,7 @@
     if (refs.endTimeLabel) refs.endTimeLabel.textContent = endTime || '--:--';
   }
 
-  // ---------- Location select ----------
+  //Location select 
   function ensureLocationSelect() {
     let existing = document.getElementById('locationSelect');
     if (existing) return existing;
@@ -119,7 +311,7 @@
 
   const locationSelectEl = ensureLocationSelect();
 
-  // ---------- CSV parsing ----------
+  //CSV parsing 
   function parseCSV(csvText) {
     const rows = [];
     let cur = '';
@@ -197,7 +389,7 @@
     return Object.keys(map).map(k => map[k]);
   }
 
-  // ---------- CSV status ----------
+  //CSV status 
   function showCSVStatus(msg, isError = false) {
     if (refs.csvFileName) {
       refs.csvFileName.textContent = msg;
@@ -205,7 +397,7 @@
     }
   }
 
-  // ---------- Load CSV ----------
+  //Load CSV 
   async function loadCSVFromPath(path) {
     try {
       const res = await fetch(path, { cache: 'no-store' });
@@ -254,7 +446,7 @@
     reader.readAsText(file);
   }
 
-  // ---------- Location select ----------
+  //Location select 
   function updateLocationSelect() {
     if (!locationSelectEl) return;
     locationSelectEl.innerHTML = '';
@@ -293,7 +485,7 @@
     return resourceSets.find(rs => rs.name === activeLocationName) || null;
   }
 
-  // ---------- Category / Source ----------
+  //Category / Source 
   function refreshRowCategoryOptions(tr) {
     const rset = getActiveResourceSet();
     const catSelect = tr.querySelector('.category-select');
@@ -344,7 +536,7 @@
     targetSelect.disabled = false;
   }
 
-  // ---------- Rows ----------
+  //Rows 
   function createRequestRow(pre = {}) {
     const tbody = refs.requestTableBody;
     if (!tbody) return null;
@@ -561,7 +753,7 @@
     updateETAStylesForRow(row);
   }
 
-  // ---------- done & partial helpers ----------
+  //done & partial helpers 
   function setDoneState(tr, done) {
     if (!tr) return;
     if (done) {
@@ -602,7 +794,7 @@
     badge.textContent = activeLocationName || 'No resources';
   }
 
-  // ---------- ETA style helpers ----------
+  //ETA style helpers 
   function updateETAStylesForRow(tr) {
     if (!tr) return;
     tr.classList.remove('eta-approach', 'eta-due');
@@ -623,7 +815,7 @@
   }
   setInterval(updateAllETAStyles, ETA_UPDATE_INTERVAL);
 
-  // ---------- serialization ----------
+  //serialization 
   function serializeGrandTable() {
     const tbody = refs.grandTableBody;
     if (!tbody) return [];
@@ -649,7 +841,7 @@
     }));
   }
 
-  // ---------- scenario persistence ----------
+  //scenario persistence 
   function getCurrentScenarioObject() {
     const incidentVal = (refs.incidentType && refs.incidentType.value === 'Other')
       ? (refs.incidentTypeOther?.value || 'Other')
@@ -754,7 +946,7 @@
     toast('Scenario loaded');
   }
 
-  // ---------- Autosave ----------
+  //Autosave 
   function scheduleAutosave() {
     if (autosaveTimer) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
@@ -792,7 +984,7 @@
     }
   }
 
-  // ---------- Analytics / summary ----------
+  //Analytics / summary 
   function computeSummary() {
     const rows = $$('#requestTable tbody tr.request-row');
     const totalRequests = rows.length;
@@ -890,7 +1082,7 @@
     }
   }
 
-  // ---------- Export PDF (Analytics screenshot + labeled tables + ICP + RR log + partials) ----------
+  //Export PDF (Analytics screenshot + labeled tables + ICP + RR log + partials) 
   function exportToPDF(data) {
     const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
     if (!jsPDFCtor) {
@@ -1163,7 +1355,7 @@
     });
   }
 
-  // ---------- Page switching ----------
+  //Page switching 
   function switchToPage(pageId) {
     ['analyticsPage', 'scenariosPage', 'grandPage'].forEach(pid => {
       const el = document.getElementById(pid);
@@ -1189,7 +1381,7 @@
     }
   }
 
-  // ---------- Summary panel ----------
+  //Summary panel 
   function renderSummaryPanel() {
     const s = computeSummary();
     if (!refs.summaryPanel) { renderAnalyticsCharts(); return; }
@@ -1238,7 +1430,94 @@
     }
   }, true);
 
-  // ---------- UI bindings ----------
+  //Initialize App (called after login) 
+  function initializeApp() {
+    const autosaved = load(KEY_AUTOSAVE, null);
+    if (autosaved) {
+      loadScenarioToUI(autosaved);
+      toast('Restored autosave');
+    } else {
+      ensureGrandTableDefaults();
+      updateTimeLabels();
+    }
+
+    // initial CSV auto-load
+    (async function initialLoad() {
+      await loadCSVFromPath(CSV_PATH);
+      const storedActive = load(KEY_ACTIVE_LOCATION, null);
+      if (storedActive) activeLocationName = storedActive;
+
+      updateLocationSelect();
+      reflectActiveLocationInUI();
+
+      renderResourceDependentUI();
+      renderScenariosList();
+      updateAllResourceBadges();
+      switchToPage('analyticsPage');
+    })();
+  }
+
+  function renderResourceDependentUI() {
+    $$('#requestTable tbody tr.request-row').forEach(tr => refreshRowCategoryOptions(tr));
+    renderSummaryPanel();
+  }
+
+  function applyGrandTable(data = []) {
+    ensureGrandTableDefaults();
+    const rows = Array.from(refs.grandTableBody.querySelectorAll('tr'));
+    rows.forEach((r, i) => {
+      r.children[1].textContent = data[i]?.assignment || '';
+    });
+  }
+
+  //UI bindings 
+  
+  // Login page bindings
+  if (refs.loginBtn) {
+    refs.loginBtn.addEventListener('click', handleLogin);
+  }
+  
+  if (refs.loginPassword) {
+    refs.loginPassword.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') handleLogin();
+    });
+  }
+
+  // Signup page bindings
+  const signupBtn = $('#signupBtn');
+  const signupPassword = $('#signupPassword');
+  const toggleSignup = $('#toggleSignup');
+  const toggleLogin = $('#toggleLogin');
+
+  if (signupBtn) {
+    signupBtn.addEventListener('click', handleSignup);
+  }
+
+  if (signupPassword) {
+    signupPassword.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') handleSignup();
+    });
+  }
+
+  if (toggleSignup) {
+    toggleSignup.addEventListener('click', (e) => {
+      e.preventDefault();
+      toggleToSignup();
+    });
+  }
+
+  if (toggleLogin) {
+    toggleLogin.addEventListener('click', (e) => {
+      e.preventDefault();
+      toggleToLogin();
+    });
+  }
+
+  // Logout button
+  if (refs.logoutBtn) {
+    refs.logoutBtn.addEventListener('click', handleLogout);
+  }
+
   refs.navAnalytics && refs.navAnalytics.addEventListener('click', () => switchToPage('analyticsPage'));
   refs.navScenarios && refs.navScenarios.addEventListener('click', () => switchToPage('scenariosPage'));
   refs.navOngoing && refs.navOngoing.addEventListener('click', () => switchToPage('grandPage'));
@@ -1344,43 +1623,8 @@
     if (e.target.closest('#requestTable')) renderSummaryPanel();
   });
 
-  // ---------- restore autosave ----------
-  const autosaved = load(KEY_AUTOSAVE, null);
-  if (autosaved) {
-    loadScenarioToUI(autosaved);
-    toast('Restored autosave');
-  } else {
-    ensureGrandTableDefaults();
-    updateTimeLabels();
-  }
-
-  // ---------- initial CSV auto-load ----------
-  (async function initialLoad() {
-    await loadCSVFromPath(CSV_PATH);
-    const storedActive = load(KEY_ACTIVE_LOCATION, null);
-    if (storedActive) activeLocationName = storedActive;
-
-    updateLocationSelect();
-    reflectActiveLocationInUI();
-
-    renderResourceDependentUI();
-    renderScenariosList();
-    updateAllResourceBadges();
-    switchToPage('analyticsPage');
-  })();
-
-  function renderResourceDependentUI() {
-    $$('#requestTable tbody tr.request-row').forEach(tr => refreshRowCategoryOptions(tr));
-    renderSummaryPanel();
-  }
-
-  function applyGrandTable(data = []) {
-    ensureGrandTableDefaults();
-    const rows = Array.from(refs.grandTableBody.querySelectorAll('tr'));
-    rows.forEach((r, i) => {
-      r.children[1].textContent = data[i]?.assignment || '';
-    });
-  }
+  //Check login status on load 
+  checkLoginStatus();
 
   // expose small debug API
   window.ETS = {
