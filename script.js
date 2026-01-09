@@ -1,7 +1,3 @@
-// script.js
-// LocalStorage: active location, saved scenarios, autosave scenario only.
-// CSV is single source; user can upload a new CSV to replace in-memory resources.
-
 (function () {
   'use strict';
 
@@ -10,9 +6,21 @@
   const KEY_ACTIVE_LOCATION = 'ets_active_location_v2';
   const KEY_SCENARIOS = 'ets_scenarios_v2';
   const KEY_AUTOSAVE = 'ets_autosave_current_v2';
+  const KEY_LOGGED_IN = 'ets_logged_in';
+  const KEY_USERNAME = 'ets_username';
   const AUTOSAVE_DELAY = 800; // ms
   const ETA_UPDATE_INTERVAL = 10_000; // ms
   const CSV_PATH = './resources.csv'; // auto-load path
+
+  // ---------- Supabase Configuration ----------
+  const SUPABASE_URL = 'https://lqewapijqycrfgbsgxwe.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_HiicAKRYHQi2GvTLF1hbnA_PzRs18EO';
+  
+  // Initialize Supabase client
+  let supabase = null;
+  if (typeof window.supabase !== 'undefined') {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
 
   // ---------- Helpers ----------
   const $ = (s, ctx = document) => (ctx || document).querySelector(s);
@@ -44,6 +52,209 @@
   function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('save err', e); } }
   function load(k, fallback = null) { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : fallback; } catch (e) { return fallback; } }
 
+  // ---------- Login/Logout Logic ----------
+  async function checkLoginStatus() {
+    if (!supabase) {
+      showLoginPage();
+      return;
+    }
+
+    // Check for existing user session in localStorage
+    const userId = load(KEY_LOGGED_IN, null);
+    const userEmail = load(KEY_USERNAME, null);
+    
+    if (userId && userEmail) {
+      // Verify user still exists in database
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (data && !error) {
+        showMainApp();
+        initializeApp();
+        return;
+      }
+    }
+    
+    showLoginPage();
+  }
+
+  function showLoginPage() {
+    const loginPage = $('#loginPage');
+    const mainApp = $('#mainApp');
+    if (loginPage) loginPage.classList.remove('hidden');
+    if (mainApp) mainApp.classList.add('hidden');
+  }
+
+  function showMainApp() {
+    const loginPage = $('#loginPage');
+    const mainApp = $('#mainApp');
+    if (loginPage) loginPage.classList.add('hidden');
+    if (mainApp) mainApp.classList.remove('hidden');
+  }
+
+  async function handleLogin() {
+    const usernameInput = $('#loginUsername');
+    const passwordInput = $('#loginPassword');
+    const errorDiv = $('#loginError');
+    
+    const email = usernameInput.value.trim();
+    const password = passwordInput.value.trim();
+    
+    if (!email || !password) {
+      errorDiv.textContent = 'Please enter both email and password';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (!supabase) {
+      errorDiv.textContent = 'Database connection error. Please try again later.';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      // Query users table for matching email and password
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .eq('password', password)
+        .single();
+
+      if (error || !data) {
+        errorDiv.textContent = 'Invalid email or password';
+        errorDiv.classList.remove('hidden');
+      } else {
+        // Save user session
+        save(KEY_LOGGED_IN, data.id);
+        save(KEY_USERNAME, data.email);
+        errorDiv.classList.add('hidden');
+        showMainApp();
+        initializeApp();
+      }
+    } catch (err) {
+      errorDiv.textContent = 'Login failed. Please try again.';
+      errorDiv.classList.remove('hidden');
+    }
+  }
+
+  async function handleSignup() {
+    const emailInput = $('#signupEmail');
+    const passwordInput = $('#signupPassword');
+    const confirmInput = $('#signupPasswordConfirm');
+    const errorDiv = $('#signupError');
+    
+    const email = emailInput.value.trim();
+    const password = passwordInput.value.trim();
+    const confirm = confirmInput.value.trim();
+    
+    if (!email || !password || !confirm) {
+      errorDiv.textContent = 'Please fill in all fields';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (password !== confirm) {
+      errorDiv.textContent = 'Passwords do not match';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (password.length < 6) {
+      errorDiv.textContent = 'Password must be at least 6 characters';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    if (!supabase) {
+      errorDiv.textContent = 'Database connection error. Please try again later.';
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      // Check if email already exists
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('email')
+        .eq('email', email)
+        .single();
+
+      if (existingUser) {
+        errorDiv.textContent = 'Email already registered';
+        errorDiv.classList.remove('hidden');
+        return;
+      }
+
+      // Extract name from email (part before @)
+      const name = email.split('@')[0];
+
+      // Insert new user into users table
+      const { data, error } = await supabase
+        .from('users')
+        .insert([
+          {
+            name: name,
+            email: email,
+            password: password,
+            isadmin: false
+          }
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        errorDiv.textContent = error.message;
+        errorDiv.classList.remove('hidden');
+      } else {
+        errorDiv.classList.add('hidden');
+        alert('Account created successfully! You can now sign in.');
+        toggleToLogin();
+        // Pre-fill email in login form
+        const loginEmail = $('#loginUsername');
+        if (loginEmail) loginEmail.value = email;
+      }
+    } catch (err) {
+      errorDiv.textContent = 'Signup failed. Please try again.';
+      errorDiv.classList.remove('hidden');
+    }
+  }
+
+  async function handleLogout() {
+    if (!confirm('Are you sure you want to logout?')) return;
+    
+    save(KEY_LOGGED_IN, null);
+    save(KEY_USERNAME, '');
+    showLoginPage();
+    
+    // Clear forms
+    const usernameInput = $('#loginUsername');
+    const passwordInput = $('#loginPassword');
+    if (usernameInput) usernameInput.value = '';
+    if (passwordInput) passwordInput.value = '';
+  }
+
+  function toggleToSignup() {
+    const loginForm = $('.login-form:not(#signupForm)');
+    const signupForm = $('#signupForm');
+    const loginError = $('#loginError');
+    if (loginError) loginError.classList.add('hidden');
+    if (loginForm) loginForm.classList.add('hidden');
+    if (signupForm) signupForm.classList.remove('hidden');
+  }
+
+  function toggleToLogin() {
+    const loginForm = $('.login-form:not(#signupForm)');
+    const signupForm = $('#signupForm');
+    const signupError = $('#signupError');
+    if (signupError) signupError.classList.add('hidden');
+    if (signupForm) signupForm.classList.add('hidden');
+    if (loginForm) loginForm.classList.remove('hidden');
+  }
+
   // ---------- DOM refs ----------
   const refs = {
     csvUpload: $('#csvUpload'),
@@ -65,6 +276,7 @@
     finishBtn: $('#finishBtn'),
     createNewBtn: $('#createNewBtn'),
     exportBtn: $('#exportBtn'),
+    logoutBtn: $('#logoutBtn'),
     autosaveBadge: $('#autosaveBadge'),
     scenariosList: $('#scenariosList'),
     chartStatus: $('#chartStatus'),
@@ -74,7 +286,10 @@
     summaryToggleBtn: $('#summaryToggleBtn'),
     resourcesUploadContainer: document.querySelector('.csv-controls') || null,
     startTimeLabel: $('#startTimeLabel'),
-    endTimeLabel: $('#endTimeLabel')
+    endTimeLabel: $('#endTimeLabel'),
+    loginBtn: $('#loginBtn'),
+    loginUsername: $('#loginUsername'),
+    loginPassword: $('#loginPassword')
   };
 
   // ---------- In-memory state ----------
@@ -83,7 +298,10 @@
   let autosaveTimer = null;
   let scenarios = load(KEY_SCENARIOS, []) || [];
 
-  let chartStatus = null, chartQty = null, chartCats = null;
+  let chartCompletedPending = null;
+  let chartEtaStatus = null;
+  let chartCats = null;
+
 
   // Scenario-level timing
   let startTime = null;
@@ -816,79 +1034,86 @@
   }
 
   function renderAnalyticsCharts(options = {}) {
-    const { instantForPDF = false } = options;
-    if (!refs.chartStatus || !refs.chartQty) return;
-    const s = computeSummary();
-    const ctx1 = refs.chartStatus.getContext('2d');
-    const ctx2 = refs.chartQty.getContext('2d');
+  const { instantForPDF = false } = options;
+  const s = computeSummary();
 
-    if (chartStatus) chartStatus.destroy();
-    if (chartQty) chartQty.destroy();
+  // ---- Completed vs Pending ----
+  const cpCtx = document.getElementById('chartCompletedPending')?.getContext('2d');
+  if (cpCtx) {
+    if (chartCompletedPending) chartCompletedPending.destroy();
 
-    const donutOptions = {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: instantForPDF ? false : { duration: 700 }
-    };
-
-    const barOptions = {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: instantForPDF ? false : { duration: 700 },
-      scales: { y: { beginAtZero: true } }
-    };
-
-    chartStatus = new Chart(ctx1, {
+    chartCompletedPending = new Chart(cpCtx, {
       type: 'doughnut',
       data: {
-        labels: ['On time', 'Approaching', 'Late', 'Completed', 'Pending'],
+        labels: ['Completed', 'Pending'],
         datasets: [{
-          data: [s.ontime, s.approaching, s.late, s.completed, s.pending],
-          backgroundColor: ['#4bbf4b', '#ffb86b', '#ff6b6b', '#6b6bd1', '#c9c9c9']
+          data: [s.completed, s.pending],
+          backgroundColor: ['#6b6bd1', '#c9c9c9']
         }]
       },
-      options: donutOptions
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: instantForPDF ? false : { duration: 700 }
+      }
     });
-
-    chartQty = new Chart(ctx2, {
-      type: 'bar',
-      data: {
-        labels: ['Qty'],
-        datasets: [{
-          label: 'Quantity',
-          data: [s.totalQty],
-          backgroundColor: ['#800000']
-        }]
-      },
-      options: barOptions
-    });
-
-    if (refs.chartCategories) {
-      const counts = {};
-      $$('#requestTable tbody tr.request-row').forEach(tr => {
-        const cat = tr.querySelector('.category-select')?.value || 'Unspecified';
-        counts[cat] = (counts[cat] || 0) + (Number(tr.querySelector('.qty-cell')?.textContent) || 1);
-      });
-      const labels = Object.keys(counts);
-      const data = labels.map(l => counts[l]);
-      if (chartCats) chartCats.destroy();
-      chartCats = new Chart(refs.chartCategories.getContext('2d'), {
-        type: 'pie',
-        data: {
-          labels,
-          datasets: [{
-            data,
-            backgroundColor: labels.map((_, i) => `hsl(${(i * 55) % 360} 70% 50%)`)
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          animation: instantForPDF ? false : { duration: 700 }
-        }
-      });
-    }
   }
+
+  // ---- ETA Status ----
+  const etaCtx = document.getElementById('chartEtaStatus')?.getContext('2d');
+  if (etaCtx) {
+    if (chartEtaStatus) chartEtaStatus.destroy();
+
+    chartEtaStatus = new Chart(etaCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['On Time', 'Approaching', 'Late'],
+        datasets: [{
+          data: [s.ontime, s.approaching, s.late],
+          backgroundColor: ['#4bbf4b', '#ffb86b', '#ff6b6b']
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: instantForPDF ? false : { duration: 700 }
+      }
+    });
+  }
+
+  // ---- Categories ----
+  if (refs.chartCategories) {
+    const counts = {};
+    $$('#requestTable tbody tr.request-row').forEach(tr => {
+      const cat = tr.querySelector('.category-select')?.value || 'Unspecified';
+      counts[cat] = (counts[cat] || 0) + (Number(tr.querySelector('.qty-cell')?.textContent) || 1);
+    });
+
+    if (chartCats) chartCats.destroy();
+    chartCats = new Chart(refs.chartCategories.getContext('2d'), {
+      type: 'pie',
+      data: {
+        labels: Object.keys(counts),
+        datasets: [{
+          data: Object.values(counts),
+          backgroundColor: Object.keys(counts).map((_, i) =>
+            `hsl(${(i * 55) % 360} 70% 50%)`
+          )
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: instantForPDF ? false : { duration: 700 }
+      }
+    });
+  }
+
+  // ---- Total Quantity display ----
+  const qtyEl = document.getElementById('totalQtyValue');
+  if (qtyEl) qtyEl.textContent = s.totalQty || 0;
+}
+
 
   // ---------- Export PDF (Analytics screenshot + labeled tables + ICP + RR log + partials) ----------
   function exportToPDF(data) {
@@ -1238,7 +1463,94 @@
     }
   }, true);
 
+  // ---------- Initialize App (called after login) ----------
+  function initializeApp() {
+    const autosaved = load(KEY_AUTOSAVE, null);
+    if (autosaved) {
+      loadScenarioToUI(autosaved);
+      toast('Restored autosave');
+    } else {
+      ensureGrandTableDefaults();
+      updateTimeLabels();
+    }
+
+    // initial CSV auto-load
+    (async function initialLoad() {
+      await loadCSVFromPath(CSV_PATH);
+      const storedActive = load(KEY_ACTIVE_LOCATION, null);
+      if (storedActive) activeLocationName = storedActive;
+
+      updateLocationSelect();
+      reflectActiveLocationInUI();
+
+      renderResourceDependentUI();
+      renderScenariosList();
+      updateAllResourceBadges();
+      switchToPage('analyticsPage');
+    })();
+  }
+
+  function renderResourceDependentUI() {
+    $$('#requestTable tbody tr.request-row').forEach(tr => refreshRowCategoryOptions(tr));
+    renderSummaryPanel();
+  }
+
+  function applyGrandTable(data = []) {
+    ensureGrandTableDefaults();
+    const rows = Array.from(refs.grandTableBody.querySelectorAll('tr'));
+    rows.forEach((r, i) => {
+      r.children[1].textContent = data[i]?.assignment || '';
+    });
+  }
+
   // ---------- UI bindings ----------
+  
+  // Login page bindings
+  if (refs.loginBtn) {
+    refs.loginBtn.addEventListener('click', handleLogin);
+  }
+  
+  if (refs.loginPassword) {
+    refs.loginPassword.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') handleLogin();
+    });
+  }
+
+  // Signup page bindings
+  const signupBtn = $('#signupBtn');
+  const signupPassword = $('#signupPassword');
+  const toggleSignup = $('#toggleSignup');
+  const toggleLogin = $('#toggleLogin');
+
+  if (signupBtn) {
+    signupBtn.addEventListener('click', handleSignup);
+  }
+
+  if (signupPassword) {
+    signupPassword.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') handleSignup();
+    });
+  }
+
+  if (toggleSignup) {
+    toggleSignup.addEventListener('click', (e) => {
+      e.preventDefault();
+      toggleToSignup();
+    });
+  }
+
+  if (toggleLogin) {
+    toggleLogin.addEventListener('click', (e) => {
+      e.preventDefault();
+      toggleToLogin();
+    });
+  }
+
+  // Logout button
+  if (refs.logoutBtn) {
+    refs.logoutBtn.addEventListener('click', handleLogout);
+  }
+
   refs.navAnalytics && refs.navAnalytics.addEventListener('click', () => switchToPage('analyticsPage'));
   refs.navScenarios && refs.navScenarios.addEventListener('click', () => switchToPage('scenariosPage'));
   refs.navOngoing && refs.navOngoing.addEventListener('click', () => switchToPage('grandPage'));
@@ -1344,43 +1656,8 @@
     if (e.target.closest('#requestTable')) renderSummaryPanel();
   });
 
-  // ---------- restore autosave ----------
-  const autosaved = load(KEY_AUTOSAVE, null);
-  if (autosaved) {
-    loadScenarioToUI(autosaved);
-    toast('Restored autosave');
-  } else {
-    ensureGrandTableDefaults();
-    updateTimeLabels();
-  }
-
-  // ---------- initial CSV auto-load ----------
-  (async function initialLoad() {
-    await loadCSVFromPath(CSV_PATH);
-    const storedActive = load(KEY_ACTIVE_LOCATION, null);
-    if (storedActive) activeLocationName = storedActive;
-
-    updateLocationSelect();
-    reflectActiveLocationInUI();
-
-    renderResourceDependentUI();
-    renderScenariosList();
-    updateAllResourceBadges();
-    switchToPage('analyticsPage');
-  })();
-
-  function renderResourceDependentUI() {
-    $$('#requestTable tbody tr.request-row').forEach(tr => refreshRowCategoryOptions(tr));
-    renderSummaryPanel();
-  }
-
-  function applyGrandTable(data = []) {
-    ensureGrandTableDefaults();
-    const rows = Array.from(refs.grandTableBody.querySelectorAll('tr'));
-    rows.forEach((r, i) => {
-      r.children[1].textContent = data[i]?.assignment || '';
-    });
-  }
+  // ---------- Check login status on load ----------
+  checkLoginStatus();
 
   // expose small debug API
   window.ETS = {
